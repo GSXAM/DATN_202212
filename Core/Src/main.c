@@ -27,19 +27,18 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-typedef enum WARNING_status
+typedef enum Warning_status
 {
-  WARNING_NONE = 0u,
+  WARNING_NONE = 0,
   WARNING_OVP,
   WARNING_OCP,
   WARNING_UVLO,
   WARNING_SCP
 }WARNING_status;
 
-typedef enum MODE_status
+typedef enum Mode_status
 {
-  MODE_NONE = 0u,
-  MODE_SET_UVLO,
+  MODE_NONE = 0,
   MODE_SET_VOUT,
   MODE_SET_OCP,
   MODE_SET_UVLO
@@ -51,19 +50,19 @@ typedef enum MODE_status
 #define FACTOR_UVLO 156.844 // =(4095/3.3V)*(6.8k/(6.8k+47k))
 #define FACTOR_VOUT 310.227 // =(4095/3.3V)*(15.67k/(15.67k+47k))
 #define FACTOR_OVP 93.0681 // =0.3V*(4095/3.3V)*(15.67k/(15.67k+47k))
+#define FACTOR_OCP(I_set) (1240.909 + I_set * 124.0909) // =(4095/3.3)*1 + I_set *((4095/3.3)/10A)
+
 #define PG_TH 0.9 // 90% VOUT
 #define PG_HYSTERESIS 0.05 // 5% VOUT
-#define LCD_delay 250 // 100ms
-#define STARTPAGE (uint32_t)0x08007C00
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define FACTOR_OCP(I_set) (1240.909 + I_set * 124.0909) // =(4095/3.3)*1 + I_set *((4095/3.3)/10A)
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-ADC_HandleTypeDef hadc;
+ ADC_HandleTypeDef hadc;
 DMA_HandleTypeDef hdma_adc;
 
 SPI_HandleTypeDef hspi1;
@@ -82,21 +81,8 @@ uint32_t erase_error_check = 0;
 uint32_t adc_value[3]; // Position: [0]A_UVLO, [1]A_VFB, [2]A_CSENSE
 uint8_t uart_rx_value[10];
 
-float val_set[3]; // Position: [0]uvlo, [1]vout, [2]ocp in 0-4095
-float ovp = 0; // Overvoltage in 0-4095
-
-float pw_good_th = 0; // Power good threshold in 0-4095
-float pw_good_hys = 0; // Power good hysteresis in 0-4095
-
-float temp_val = 0; // Temporary value in (v) or (A)
-
-uint32_t current_mode = MODE_NONE; // Biến chỉ trạng thái MODE_status
-uint32_t current_warning = WARNING_NONE; // Biến chỉ trạng thái WARNING_status
-
-// Các giá trị bên dưới dùng để đọc hoặc ghi từ bộ nhớ FLASH
-float uvlo; // Giá trị cài đặt UVLO in (V)
-float vout; // Giá trị cài đặt VOUT in (V)
-float ocp;  // Giá trị cài đặt OCP in (A)
+uint32_t current_warning = WARNING_NONE;
+uint32_t current_mode = MODE_NONE;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -108,9 +94,6 @@ static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM14_Init(void);
 /* USER CODE BEGIN PFP */
-void Setup_value_compare(); // Cài đặt giá trị so sánh: UVLO, VOUT, OCP, OVP, POWER_GOOD threshold
-void Flash_read_write(uint32_t flash_OP); // Đọc ghi dữ liệu vào FLASH
-void Reset_current_state(); // Reset all mode setup value
 
 /* USER CODE END PFP */
 
@@ -172,7 +155,6 @@ int main(void)
   HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_SET); // Đóng điện vào
   HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1); // Start timer, output PWM 50kHz 2.5%
 
-  // Kiểm tra ngắn mạch ngay từ khi bắt đầu chạy
   if((HAL_GPIO_ReadPin(S_CSP_GPIO_Port, S_CSP_Pin) & HAL_GPIO_ReadPin(C_SCP_GPIO_Port, C_SCP_Pin)) == 1){
     HAL_Delay(100); // delay 100ms
   }
@@ -182,9 +164,7 @@ int main(void)
     HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
     HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
     // Hiển thị LCD ngắn mạch
-    while (current_warning != WARNING_NONE){ // wait for OK button
-      Reset_current_state();
-    }
+    while (current_warning != WARNING_NONE); // wait for OK button
     goto BEGIN_SWITCH_ON;
   }
   /* USER CODE END 2 */
@@ -193,20 +173,16 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   BEGIN_OUTPUT: // Bắt đầu xuất điện áp ra VOUT và đo đạc ADC
   HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_RESET);
-  uint32_t LCD_delay_start = HAL_GetTick(); // bắt đầu đếm thời gian chờ để cập nhật thông tin LCD
   while (1)
   {
     // Undervoltage lockout
-    if(adc_value[0] <= val_set[0]){ // A_UVLO <= UVLO
+    if(adc_value[0] <= uvlo){ // A_UVLO <= UVLO
       current_warning = WARNING_UVLO;
       HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
       HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
       HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
       // Hiển thị LCD sụt áp
-      //
-      while (current_warning != WARNING_NONE){ // wait for OK button
-        Reset_current_state();
-      }
+      while (current_warning != WARNING_NONE); // wait for OK button
       goto BEGIN_SWITCH_ON;
     }
     // Overvoltage protection
@@ -215,21 +191,15 @@ int main(void)
       HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
       HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
       // Hiển thị LCD quá áp
-      //
-      while (current_warning != WARNING_NONE){ // wait for OK button
-        Reset_current_state();
-      }
+      while (current_warning != WARNING_NONE);
       goto BEGIN_SWITCH_ON;
     }
     // Overcurrent protection
-    if(adc_value[2] >= val_set[2]){ // A_CSENSE >= OCP
+    if(adc_value[2] >= ocp){ // A_CSENSE >= OCP
       current_warning = WARNING_OCP;
       HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
       // Hiển thị LCD quá dòng
-      //
-      while (current_warning != WARNING_NONE){ // wait for OK button
-        Reset_current_state();
-      }
+      while (current_warning != WARNING_NONE);
       goto BEGIN_OUTPUT;
     }
     // LED power good
@@ -239,15 +209,9 @@ int main(void)
       HAL_GPIO_WritePin(PGOOD_GPIO_Port, PGOOD_Pin, GPIO_PIN_SET);
     }
 
-    /**
-     * Hiển thị công suất, dòng, áp lên LCD.
-     * Chu kỳ thay đổi dữ liệu LCD là 250ms.
-    */
-    if((HAL_GetTick() - LCD_delay_start) >= LCD_delay){
-      // Thay đổi thông số LCD
-      //
-      LCD_delay_start = HAL_GetTick(); // cập nhật thời gian
-    }
+    // -------------------------------------
+    // Hiển thị dòng, áp, công suất lên LCD.
+    // -------------------------------------
 
     /* USER CODE END WHILE */
 
@@ -576,10 +540,10 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(CSDAC_GPIO_Port, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI0_1_IRQn, 1, 0); // MODE, (-) button
+  HAL_NVIC_SetPriority(EXTI0_1_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(EXTI0_1_IRQn);
 
-  HAL_NVIC_SetPriority(EXTI4_15_IRQn, 1, 0); // S_SCP, OK, (+) button
+  HAL_NVIC_SetPriority(EXTI4_15_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
 
 }
