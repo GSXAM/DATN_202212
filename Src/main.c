@@ -27,22 +27,28 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-typedef enum Warning_status
+typedef enum WARNING_status
 {
-  WARNING_NONE = 0,
+  WARNING_NONE = 0u,
   WARNING_OVP,
   WARNING_OCP,
   WARNING_UVLO,
   WARNING_SCP
 }WARNING_status;
 
-typedef enum Mode_status
+typedef enum MODE_status
 {
-  MODE_NONE = 0,
+  MODE_NONE = 0u,
+  MODE_SET_UVLO,
   MODE_SET_VOUT,
-  MODE_SET_OCP,
-  MODE_SET_UVLO
-};
+  MODE_SET_OCP
+}MODE_status;
+
+typedef enum FLASH_status
+{
+  FLASH_READ = 0u,
+  FLASH_WRITE
+}FLASH_status;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -50,15 +56,19 @@ typedef enum Mode_status
 #define FACTOR_UVLO 156.844 // =(4095/3.3V)*(6.8k/(6.8k+47k))
 #define FACTOR_VOUT 310.227 // =(4095/3.3V)*(15.67k/(15.67k+47k))
 #define FACTOR_OVP 93.0681 // =0.3V*(4095/3.3V)*(15.67k/(15.67k+47k))
-#define FACTOR_OCP(I_set) (1240.909 + I_set * 124.0909) // =(4095/3.3)*1 + I_set *((4095/3.3)/10A)
+#define FACTOR_DAC FACTOR_VOUT // =(4095/(3.3)*(1/4)
 
 #define PG_TH 0.9 // 90% VOUT
 #define PG_HYSTERESIS 0.05 // 5% VOUT
+
+#define STARTPAGE ((uint32_t)0x08007C00) // Page 31 - Sector 7
+
+#define LCD_DELAY250 250// LCD refresh after each 250ms
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+#define FACTOR_OCP(I_set) (1240.909 + I_set * 124.0909) // =(4095/3.3)*1 + I_set *((4095/3.3)/10A)
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -78,8 +88,21 @@ DMA_HandleTypeDef hdma_usart1_tx;
 FLASH_EraseInitTypeDef erase_init;
 uint32_t erase_error_check = 0;
 
-uint32_t adc_value[3]; // Position: [0]A_UVLO, [1]A_VFB, [2]A_CSENSE
-uint8_t uart_rx_value[10];
+uint32_t adc_value[3]; // ADC realtime values: [0]A_UVLO, [1]A_VFB, [2]A_CSENSE in range 0-4095
+uint8_t uart_rx_value[10]; // UART_RX buffer
+uint16_t vref = 0; // DACVREF in range 0-4095
+uint32_t uvlo_compare = 0; // UVLO comparing value in range 0-4095
+uint32_t ovp_compare = 0; // OVP comparing value in range 0-4095
+uint32_t ocp_compare = 0; // OCP comparing value in range 0-4095
+uint32_t pw_good_th = 0; // PGood threshold value in range 0-4095
+uint32_t pw_good_hys = 0; // PGood hysteresis value in range 0-4095
+
+
+float uvlo_flash = 0; // UVLO flash value in (V)
+float vout_flash = 0; // VOUT flash value in (V)
+float ocp_flash = 0; // OCP flash value in (A)
+
+float temp_val = 0; // temporary value
 
 uint32_t current_warning = WARNING_NONE;
 uint32_t current_mode = MODE_NONE;
@@ -94,6 +117,10 @@ static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM14_Init(void);
 /* USER CODE BEGIN PFP */
+
+void Setup_values(); // Converting user values to 12-bit values
+void Flash_read_write(uint32_t flash_OP); // Read or write user values to flash memory
+void Reset_current_state(); // Reset current state
 
 /* USER CODE END PFP */
 
@@ -138,24 +165,29 @@ int main(void)
   /* USER CODE BEGIN 2 */
   // Khởi tạo ADC, DMA, SPI, UART, LCD.
 	HAL_ADC_Start_DMA(&hadc, adc_value, sizeof(adc_value));
-	HAL_UART_Receive_DMA(&huart1, uart_rx_value, sizeof(uart_rx_value)); // Note: dữ liệu mới tự động ghi đè khi tràn vùng nhớ
-
-  /*
-  1. Khởi tạo giá trị của biến bảo vệ mặc định. VD: int UVLO = 11V.
-  2. Sau đó đọc lại các giá trị này từ bộ nhớ flash.
-  */
-	float	uvlo = 11 * FACTOR_UVLO;		// Bảo vệ sụt áp tại 11V
-	float vout = 3.3 * FACTOR_VOUT;		// Cài đặt điện áp ra 3.3V
-	float ovp = vout + FACTOR_OVP;		// Bảo vệ quá áp khi vượt quá 0.3V
-  float pw_good_th = vout*PG_TH;       // Ngưỡng kích hoạt LED Power good
-  float pw_good_hys = vout*PG_HYSTERESIS; // Khoảng trễ LED Power good
-	float ocp = FACTOR_OCP(10);				// Bảo vệ quá dòng 10A
+	HAL_UART_Receive_DMA(&huart1, uart_rx_value, sizeof(uart_rx_value)); // Note: New values will overwrite when overflow data
 	
-  BEGIN_SWITCH_ON: // Bắt đầu đóng điện vào mạch công suất
-  HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_SET); // Đóng điện vào
+	erase_init.TypeErase = FLASH_TYPEERASE_PAGES;
+	erase_init.PageAddress = STARTPAGE;
+	erase_init.NbPages = 1;
+	
+  /** @brief Initial values:
+   * UVLO at 11V
+   * VOUT at 3.3V
+   * Overvoltage protection at VOUT + 0.3V
+   * LED Power good threshold (Vth(+) = 3.135V)
+   * LED Power good hysteresis (Vth(-) = 2.805V)
+   * Overcurrent protection at 10A
+   * @note Initial values are stored in flash memory
+  */
+  Flash_read_write(FLASH_READ);
+	
+  BEGIN_SWITCH_ON: // Input voltage from source come into Power circuitry
+  HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_SET); // Switch ON
   HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1); // Start timer, output PWM 50kHz 2.5%
-
-  if((HAL_GPIO_ReadPin(S_CSP_GPIO_Port, S_CSP_Pin) & HAL_GPIO_ReadPin(C_SCP_GPIO_Port, C_SCP_Pin)) == 1){
+  // Check Short circuit at the beginning
+  if((HAL_GPIO_ReadPin(S_CSP_GPIO_Port, S_CSP_Pin) & HAL_GPIO_ReadPin(C_SCP_GPIO_Port, C_SCP_Pin)) == 1)
+  {
     HAL_Delay(100); // delay 100ms
   }
   else{
@@ -163,56 +195,82 @@ int main(void)
     HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
     HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
-    // Hiển thị LCD ngắn mạch
-    while (current_warning != WARNING_NONE); // wait for OK button
+    // Display LCD: SCP
+    while(current_warning != WARNING_NONE)
+    { // wait for OK button
+      Reset_current_state();
+    }
     goto BEGIN_SWITCH_ON;
   }
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  BEGIN_OUTPUT: // Bắt đầu xuất điện áp ra VOUT và đo đạc ADC
+  BEGIN_OUTPUT: // Exporting VOUT and measure ADC values
   HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_RESET);
+  uint32_t LCD_tickstart = HAL_GetTick(); // LCD timepoint to refresh
+
+  // While infinity loop
   while (1)
   {
+    // Shortcircuit protection
+    if(current_warning == WARNING_SCP)
+    {
+      while(current_warning != WARNING_NONE)
+      { // wait for OK button
+        Reset_current_state();
+      }
+      goto BEGIN_SWITCH_ON;
+    }
     // Undervoltage lockout
-    if(adc_value[0] <= uvlo){ // A_UVLO <= UVLO
+    if(adc_value[0] <= uvlo_compare) // A_UVLO <= UVLO
+    {
       current_warning = WARNING_UVLO;
       HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
       HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
       HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
-      // Hiển thị LCD sụt áp
-      while (current_warning != WARNING_NONE); // wait for OK button
+      // Display LCD: UVLO
+      while (current_warning != WARNING_NONE)
+      { // wait for OK button
+        Reset_current_state();
+      }
       goto BEGIN_SWITCH_ON;
     }
     // Overvoltage protection
-    if(adc_value[1] >= ovp){ // A_VFB >= OVP
+    if(adc_value[1] >= ovp_compare) // A_VFB >= OVP
+    {
       current_warning = WARNING_OVP;
       HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
       HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
-      // Hiển thị LCD quá áp
+      // Display LCD: OVP
       while (current_warning != WARNING_NONE);
       goto BEGIN_SWITCH_ON;
     }
     // Overcurrent protection
-    if(adc_value[2] >= ocp){ // A_CSENSE >= OCP
+    if(adc_value[2] >= ocp_compare)
+    { // A_CSENSE >= OCP
       current_warning = WARNING_OCP;
       HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
-      // Hiển thị LCD quá dòng
+      // Display LCD: OCP
       while (current_warning != WARNING_NONE);
       goto BEGIN_OUTPUT;
     }
     // LED power good
-    if(adc_value[1] >= (pw_good_th + pw_good_hys)){
+    if(adc_value[1] >= (pw_good_th + pw_good_hys))
+    {
       HAL_GPIO_WritePin(PGOOD_GPIO_Port, PGOOD_Pin, GPIO_PIN_RESET);
-    }else if (adc_value[1] <= (pw_good_th - pw_good_hys)){
+    }
+    else if (adc_value[1] <= (pw_good_th - pw_good_hys))
+    {
       HAL_GPIO_WritePin(PGOOD_GPIO_Port, PGOOD_Pin, GPIO_PIN_SET);
     }
 
-    // -------------------------------------
-    // Hiển thị dòng, áp, công suất lên LCD.
-    // -------------------------------------
-
+    if((HAL_GetTick() - LCD_tickstart) >= LCD_DELAY250)
+    {
+      // -------------------------------------
+      // Display Voltage, Current, Power change on LCD
+      // -------------------------------------
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -549,8 +607,124 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-  //
+
+void Setup_values()
+{
+  uvlo_compare = uvlo_flash * FACTOR_UVLO;
+  ovp_compare = vout_flash * FACTOR_VOUT + FACTOR_OVP;
+  ocp_compare = FACTOR_OCP(ocp_flash);
+  pw_good_th = vout_flash * FACTOR_VOUT * PG_TH;
+  pw_good_hys = vout_flash * FACTOR_VOUT * PG_HYSTERESIS;
+  vref = vout_flash * FACTOR_DAC;
+}
+
+void Flash_read_write(uint32_t flash_OP)
+{
+  switch (flash_OP)
+  {
+    case FLASH_READ:
+      // 1. Read data from flash memory
+      uvlo_flash = *(float*)(STARTPAGE);
+      vout_flash = *(float*)(STARTPAGE + 4u);
+      ocp_flash = *(float*)(STARTPAGE + 8u);
+      // 3. Setup comparing values after changing
+      Setup_values();
+      break;
+    
+    case FLASH_WRITE:
+      // 2. Write data from flash memory
+      HAL_FLASH_Unlock();
+      HAL_FLASHEx_Erase(&erase_init, &erase_error_check);
+
+      HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, STARTPAGE, uvlo_flash);
+      HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, STARTPAGE + 4u, vout_flash);
+      HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, STARTPAGE + 8u, ocp_flash);
+
+      HAL_FLASH_Lock();
+      // 3. Setup comparing values after changing
+      Setup_values();
+      break;
+    default:
+      break;
+  }
+}
+
+void Reset_current_state()
+{
+  // Reset all mode setup value
+    current_mode = MODE_NONE;
+    temp_val = 0;
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  switch (GPIO_Pin)
+  {
+    case S_CSP_Pin:
+      current_warning = WARNING_SCP;
+      HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
+      HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
+      // Display LCD: SCP
+      //
+      break;
+    case BT_MODE_Pin:
+      switch (current_mode)
+      {
+        case MODE_NONE:
+          temp_val = uvlo_flash;
+          current_mode++;
+          break;
+        case MODE_SET_UVLO:
+          temp_val = vout_flash;
+          current_mode++;
+          break;
+        case MODE_SET_VOUT:
+          temp_val = ocp_flash;
+          current_mode++;
+          break;
+        case MODE_SET_OCP:
+          temp_val = 0;
+          current_mode = MODE_NONE;
+          break;
+        default:
+          break;
+      }
+      break;
+    case BT_PLUS_Pin:
+      temp_val += 0.1;
+      break;
+    case BT_minus_Pin:
+      temp_val -= 0.1;
+      break;
+    case BT_OK_Pin:
+      // 1. Reset warning
+      if(current_warning != WARNING_NONE)
+      {
+        current_warning = WARNING_NONE;
+      }
+      // 2. Save changes
+      switch (current_mode)
+      {
+        case MODE_NONE:
+          // do nothing
+          break;
+        case MODE_SET_UVLO:
+          uvlo_flash = temp_val;
+          Flash_read_write(FLASH_WRITE);
+          break;
+        case MODE_SET_VOUT:
+          vout_flash = temp_val;
+          Flash_read_write(FLASH_WRITE);
+          break;
+        case MODE_SET_OCP:
+          ocp_flash = temp_val;
+          Flash_read_write(FLASH_WRITE);
+          break;
+        default:
+          break;
+      }
+	}
 }
 /* USER CODE END 4 */
 
