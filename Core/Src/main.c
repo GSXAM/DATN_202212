@@ -41,14 +41,9 @@ typedef enum MODE_status
   MODE_NONE = 0u,
   MODE_SET_UVLO,
   MODE_SET_VOUT,
-  MODE_SET_OCP
-}MODE_status;
-
-typedef enum FLASH_status
-{
-  FLASH_READ = 0u,
-  FLASH_WRITE
-}FLASH_status;
+  MODE_SET_OCP,
+  MODE_SET_UVLO
+};
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -161,21 +156,17 @@ int main(void)
   // Khởi tạo ADC, DMA, SPI, UART, LCD.
 	HAL_ADC_Start_DMA(&hadc, adc_value, sizeof(adc_value));
 	HAL_UART_Receive_DMA(&huart1, uart_rx_value, sizeof(uart_rx_value)); // Note: dữ liệu mới tự động ghi đè khi tràn vùng nhớ
-	
-	erase_init.TypeErase = FLASH_TYPEERASE_PAGES;
-	erase_init.PageAddress = STARTPAGE;
-	erase_init.NbPages = 1;
-	
-  /** @brief Giá trị khởi tạo từ bộ nhớ FLASH như sau:
-   * val_set[3]: Position [0]uvlo, [1]vout, [2]ocp
-   * Bảo vệ sụt áp tại 11V
-   * Cài đặt điện áp ra 3.3V
-   * Bảo vệ quá áp khi vượt quá 0.3V
-   * Ngưỡng kích hoạt LED Power good (Vth(+) = 3.135V)
-   * Khoảng trễ LED Power good (Vth(-) = 2.805V)
-   * Bảo vệ quá dòng 10A
+
+  /*
+  1. Khởi tạo giá trị của biến bảo vệ mặc định. VD: int UVLO = 11V.
+  2. Sau đó đọc lại các giá trị này từ bộ nhớ flash.
   */
-  Flash_read_write(FLASH_READ);
+	float	uvlo = 11 * FACTOR_UVLO;		// Bảo vệ sụt áp tại 11V
+	float vout = 3.3 * FACTOR_VOUT;		// Cài đặt điện áp ra 3.3V
+	float ovp = vout + FACTOR_OVP;		// Bảo vệ quá áp khi vượt quá 0.3V
+  float pw_good_th = vout*PG_TH;       // Ngưỡng kích hoạt LED Power good
+  float pw_good_hys = vout*PG_HYSTERESIS; // Khoảng trễ LED Power good
+	float ocp = FACTOR_OCP(10);				// Bảo vệ quá dòng 10A
 	
   BEGIN_SWITCH_ON: // Bắt đầu đóng điện vào mạch công suất
   HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_SET); // Đóng điện vào
@@ -205,13 +196,6 @@ int main(void)
   uint32_t LCD_delay_start = HAL_GetTick(); // bắt đầu đếm thời gian chờ để cập nhật thông tin LCD
   while (1)
   {
-    // Shortcircuit protection
-    if(current_warning == WARNING_SCP){
-      while(current_warning != WARNING_NONE){ // wait for OK button
-        Reset_current_state();
-      }
-      goto BEGIN_SWITCH_ON;
-    }
     // Undervoltage lockout
     if(adc_value[0] <= val_set[0]){ // A_UVLO <= UVLO
       current_warning = WARNING_UVLO;
@@ -601,121 +585,8 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
-void Setup_value_compare()
-{
-  val_set[0] = uvlo * FACTOR_UVLO;
-  val_set[1] = vout * FACTOR_VOUT;
-  ovp = val_set[1] + FACTOR_OVP;
-  pw_good_th = val_set[1]*PG_TH;
-  pw_good_hys = val_set[1]*PG_HYSTERESIS;
-  val_set[2] = FACTOR_OCP(ocp);
-}
-
-void Flash_read_write(uint32_t flash_OP)
-{
-  switch (flash_OP)
-  {
-    case FLASH_READ:
-      // 1. Đọc lại dự liệu từ bộ nhớ flash
-      uvlo = *(uint32_t*)(STARTPAGE);
-      vout = *(uint32_t*)(STARTPAGE + 4u);
-      ocp = *(uint32_t*)(STARTPAGE + 8u);
-      // 3. Cài đặt giá trị so sánh
-      Setup_value_compare();
-      break;
-    
-    case FLASH_WRITE:
-      // 2. Ghi dữ liệu vào bộ nhớ flash
-      HAL_FLASH_Unlock();
-      HAL_FLASHEx_Erase(&erase_init, &erase_error_check);
-
-      HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, STARTPAGE, uvlo);
-      HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, STARTPAGE + 4u, vout);
-      HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, STARTPAGE + 8u, ocp);
-
-      HAL_FLASH_Lock();
-      // 3. Cài đặt giá trị so sánh
-      Setup_value_compare();
-      break;
-    default:
-      break;
-  }
-}
-
-void Reset_current_state()
-{
-  // Reset all mode setup value
-    current_mode = MODE_NONE;
-    temp_val = 0;
-}
-
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-{
-  switch (GPIO_Pin)
-  {
-    case S_CSP_Pin:
-      current_warning = WARNING_SCP;
-      HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
-      HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
-      // Hiển thị LCD ngắn mạch
-      //
-      break;
-    case BT_MODE_Pin:
-      switch (current_mode)
-      {
-        case MODE_NONE:
-          temp_val = uvlo;
-          current_mode++;
-          break;
-        case MODE_SET_UVLO:
-          temp_val = vout;
-          current_mode++;
-          break;
-        case MODE_SET_VOUT:
-          temp_val = ocp;
-          current_mode++;
-          break;     
-        case MODE_SET_OCP:
-          temp_val = 0;
-          current_mode = MODE_NONE;
-          break;
-        default:
-          break;
-      }
-      break;
-    case BT_PLUS_Pin:
-      temp_val += 0.1;
-      break;
-    case BT_minus_Pin:
-      temp_val -= 0.1;
-      break;
-    case BT_OK_Pin:
-      switch (current_mode)
-      {
-        case MODE_NONE:
-          //1. Reset warning
-          if(current_warning != WARNING_NONE){
-            current_warning = WARNING_NONE;
-          }
-          break;
-        case MODE_SET_UVLO:
-          uvlo = temp_val;
-          Flash_read_write(FLASH_WRITE);
-          break;
-        case MODE_SET_VOUT:
-          vout = temp_val;
-          Flash_read_write(FLASH_WRITE);
-          break;
-        case MODE_SET_OCP:
-          ocp = temp_val;
-          Flash_read_write(FLASH_WRITE);
-          break;
-        default:
-          break;
-      }
-	}
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+  //
 }
 /* USER CODE END 4 */
 
