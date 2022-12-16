@@ -58,17 +58,27 @@ typedef enum FLASH_status
 #define FACTOR_OVP 93.0681 // =0.3V*(4095/3.3V)*(15.67k/(15.67k+47k))
 #define FACTOR_DAC FACTOR_VOUT // =(4095/(3.3)*(1/4)
 
+#define DAC_SETTING (uint16_t)0x7000u // bit15=0: channel A; bit14=1: buffered; bit13=1: gain x1; bit12=1: output enable
+
 #define PG_TH 0.9 // 90% VOUT
 #define PG_HYSTERESIS 0.05 // 5% VOUT
 
 #define STARTPAGE ((uint32_t)0x08007C00) // Page 31 - Sector 7
 
 #define LCD_DELAY250 250// LCD refresh after each 250ms
+#define MODE_COMMAND GPIO_PIN_RESET
+#define MODE_DATA 	 GPIO_PIN_SET
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 #define FACTOR_OCP(I_set) (1240.909 + I_set * 124.0909) // =(4095/3.3)*1 + I_set *((4095/3.3)/10A)
+
+#define uc1701Set_CD_mode(mode) HAL_GPIO_WritePin(CD_GPIO_Port, CD_Pin, mode)
+#define uc1701Set_CS_level(level) HAL_GPIO_WritePin(CSLCD_GPIO_Port, CSLCD_Pin, level)
+#define uc1701Set_RESET(level) HAL_GPIO_WritePin(RESETLCD_GPIO_Port, RESETLCD_Pin, level)
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -121,7 +131,15 @@ static void MX_TIM14_Init(void);
 void Setup_values(); // Converting user values to 12-bit values
 void Flash_read_write(uint32_t flash_OP); // Read or write user values to flash memory
 void Reset_current_state(); // Reset current state
-
+void SPI_transmit(uint8_t *pdata, uint32_t size); // SPI transmit only
+void DAC_send(uint16_t *vref); // Send command to DACVREF
+void uc1701Init(void); // LCD 12864 dot matrix init with UC1701 controller
+void uc1701SPI_send(uint8_t *value, int size); // LCD send data
+void uc1701Fill(uint8_t ucData); // Fill all pixels of the LCD display
+void uc1701SetPosition(int x, int y); // Set LCD cursor
+void uc1701WriteDataBlock(uint8_t *ucBuf, int iLen); // Write a block data to LCD
+void uc1701SetContrast(uint8_t ucContrast); // Adjust the constrast of the LCD display
+//
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -615,7 +633,15 @@ void Setup_values()
   ocp_compare = FACTOR_OCP(ocp_flash);
   pw_good_th = vout_flash * FACTOR_VOUT * PG_TH;
   pw_good_hys = vout_flash * FACTOR_VOUT * PG_HYSTERESIS;
-  vref = vout_flash * FACTOR_DAC;
+  // When vout_flash has just been updated or on system startup,
+  // send new vout to output through DACVREF.
+  uint16_t temp = vout_flash * FACTOR_DAC;
+  if(temp != vref)
+  {
+    vref = temp;
+    // send vref to DAC
+    DAC_send(&vref);
+  }
 }
 
 void Flash_read_write(uint32_t flash_OP)
@@ -652,9 +678,139 @@ void Flash_read_write(uint32_t flash_OP)
 void Reset_current_state()
 {
   // Reset all mode setup value
-    current_mode = MODE_NONE;
-    temp_val = 0;
+  current_mode = MODE_NONE;
+  temp_val = 0;
 }
+
+void SPI_transmit(uint8_t *pdata, uint32_t size)
+{
+  pdata += (size-1);
+  // Transmit only Procedure
+	__HAL_SPI_ENABLE(&hspi1);		// Enable SPI peripheral
+  while(size > 0)
+  {
+    if((hspi1.Instance->SR & 0x2) == 0x2) // Wait until TXE=1
+    {
+      hspi1.Instance->DR = *pdata;
+      pdata--;
+      size--;
+    }
+  }
+  while((hspi1.Instance->SR & 0x80) != 0x80); // Wait until BSY=0
+  __HAL_SPI_DISABLE(&hspi1); // Disable SPI peripheral
+}
+
+void DAC_send(uint16_t *vref)
+{
+  *vref = DAC_SETTING | *vref;
+  HAL_GPIO_WritePin(CSDAC_GPIO_Port, CSDAC_Pin, GPIO_PIN_RESET);
+  SPI_transmit((uint8_t*)vref, 2);
+  HAL_GPIO_WritePin(CSDAC_GPIO_Port, CSDAC_Pin, GPIO_PIN_SET);
+}
+
+void uc1701Init()
+{
+	// Start by reseting the LCD controller (Hardware reset)
+	uc1701Set_RESET(GPIO_PIN_SET);		// Make sure RESET pin at HIGH before reset LCD. Delay at least 3ms.
+	HAL_Delay(50);
+	uc1701Set_RESET(GPIO_PIN_RESET);	// After pull RESET pin LOW, wait at least 1us.
+	HAL_Delay(5);
+	uc1701Set_RESET(GPIO_PIN_SET);		// Take it out of reset.
+	HAL_Delay(5);
+
+	uint8_t init_cmds[] = {
+		0xe2, // (15.)system reset
+		0xae, // (12.)display off
+		0x40, // (6.)set LCD start line to 0
+		0xa0, // (13.)set SEG direction ('a1-a0' to flip horizontal)
+		0xc0, // (14.)set COM direction ('c0-c8' to flip vert)
+		0xa2, // (17.)set LCD bias ratio 1/9
+		0x2f, // (5.)all power control circuits on
+		0xf8, 0x00, // (22.)set booster ratio to 4x
+		0x23, // (8.)set resistor ratio = 4 (default = 100b)
+		0xfa, // (25.)Set Temp compensation, 0.11 deg/c WP Off WC Off
+		0xac, // (20.)set static indicator off
+		0xa6, // (11.)disable inverse
+		0xaf, // (12.)enable display
+		0xa5, // (10.)Set all pixel OFF
+		0x81, 0x3e, // (9.)set contrast = 63
+	};
+	uc1701Set_CD_mode(MODE_COMMAND);
+	uc1701SPI_send(init_cmds, sizeof(init_cmds));
+	HAL_Delay(100);
+	uint8_t nordis = 0xa4; // (10.)normal display
+	uc1701SPI_send(&nordis, 1);
+	HAL_Delay(50);
+	uc1701Fill(0x00); // erase memory
+}
+
+/** @brief LCD send data
+ *  @param value: pointer of data.
+ *  @param size: how many byte of data need to be sent.
+ *  @retval None
+ */
+void uc1701SPI_send(uint8_t *value, int size)
+{
+	uc1701Set_CS_level(GPIO_PIN_RESET);
+	SPI_transmit(value, size);
+	uc1701Set_CS_level(GPIO_PIN_SET);
+}
+
+/** @brief Fill all pixels of the LCD display.
+ *  @param ucData: value in uint8_t type.
+ *  @retval None.
+ */
+void uc1701Fill(uint8_t ucData)
+{
+	int y;								 // Row as Pages
+	uint8_t temp[128];			 // 128 columns
+	memset(temp, ucData, 128);
+	for (y=0; y<8; y++)					 // 8 Pages
+	{
+		uc1701SetPosition(0,y);			 // set to (0,Y)
+		uc1701WriteDataBlock(temp, 128); // fill with data byte
+	}
+}
+
+/** @brief Set LCD cursor
+ * 	@param x: horizontal position
+ * 	@param y: vertical position
+ * 	@retval None.
+ */
+void uc1701SetPosition(int x, int y)
+{
+	uc1701Set_CD_mode(MODE_COMMAND);
+	uint8_t cmds[] = {0xb0 | y,			// set Y
+							0x10 | (x >> 4),	// set X (high MSB)
+							0x00 | (x & 0xf)};	// set X (low MSB)
+	uc1701SPI_send(cmds, sizeof(cmds));
+}
+/** @brief Write a block data to LCD.
+ *  @param ucBuf: pointer of data.
+ *  @param ilen: how many byte of data need to be sent.
+ *  @retval None
+ */
+void uc1701WriteDataBlock(uint8_t *ucBuf, int iLen)
+{
+	uc1701Set_CD_mode(MODE_DATA);
+	uc1701SPI_send(ucBuf, iLen);
+}
+
+/** @brief Adjust the constrast of the LCD display
+ *  @param ucConstrast: value range: 0~63
+ *  @retval None.
+ */
+void uc1701SetContrast(uint8_t ucContrast)
+{
+	uc1701Set_CD_mode(MODE_COMMAND);
+  uint8_t cmds[] = {0x81, ucContrast};
+	uc1701SPI_send(cmds, sizeof(cmds));
+}
+
+
+
+
+
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
