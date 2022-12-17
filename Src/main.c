@@ -98,14 +98,14 @@ DMA_HandleTypeDef hdma_usart1_tx;
 FLASH_EraseInitTypeDef erase_init;
 uint32_t erase_error_check = 0;
 
-uint32_t adc_value[3]; // ADC realtime values: [0]A_UVLO, [1]A_VFB, [2]A_CSENSE in range 0-4095
+uint32_t adc_value[3]; // ADC realtime values: [0]A_UVLO, [1]A_VFB, [2]A_CSENSE in range 0~4095
 uint8_t uart_rx_value[10]; // UART_RX buffer
-uint16_t vref = 0; // DACVREF in range 0-4095
-uint32_t uvlo_compare = 0; // UVLO comparing value in range 0-4095
-uint32_t ovp_compare = 0; // OVP comparing value in range 0-4095
-uint32_t ocp_compare = 0; // OCP comparing value in range 0-4095
-uint32_t pw_good_th = 0; // PGood threshold value in range 0-4095
-uint32_t pw_good_hys = 0; // PGood hysteresis value in range 0-4095
+uint16_t vref = 0; // DACVREF in range 0~4095
+uint32_t uvlo_compare = 0; // UVLO comparing value in range 0~4095
+uint32_t ovp_compare = 0; // OVP comparing value in range 0~4095
+uint32_t ocp_compare = 0; // OCP comparing value in range 0~4095
+uint32_t pw_good_th = 0; // PGood threshold value in range 0~4095
+uint32_t pw_good_hys = 0; // PGood hysteresis value in range 0~4095
 
 
 float uvlo_flash = 0; // UVLO flash value in (V)
@@ -181,9 +181,10 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM14_Init();
   /* USER CODE BEGIN 2 */
-  // Khởi tạo ADC, DMA, SPI, UART, LCD.
+  // Init ADC, DMA, SPI, UART, LCD.
 	HAL_ADC_Start_DMA(&hadc, adc_value, sizeof(adc_value));
-	HAL_UART_Receive_DMA(&huart1, uart_rx_value, sizeof(uart_rx_value)); // Note: New values will overwrite when overflow data
+	HAL_UART_Receive_DMA(&huart1, uart_rx_value, sizeof(uart_rx_value)); // Note: New values will overwrite when overflow data (Circular mode)
+  uc1701Init(); // LCD init, setup LCD and clear screen
 	
 	erase_init.TypeErase = FLASH_TYPEERASE_PAGES;
 	erase_init.PageAddress = STARTPAGE;
@@ -626,6 +627,9 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+/** @brief Converting user values to 12-bit values and set new VOUT
+ * @retval NONE
+*/
 void Setup_values()
 {
   uvlo_compare = uvlo_flash * FACTOR_UVLO;
@@ -644,6 +648,10 @@ void Setup_values()
   }
 }
 
+/** @brief Read or write user values to FLASH memory, then setup comparing values
+ * @param flash_OP: types in FLASH_status typedef
+ * @retval NONE
+*/
 void Flash_read_write(uint32_t flash_OP)
 {
   switch (flash_OP)
@@ -674,7 +682,9 @@ void Flash_read_write(uint32_t flash_OP)
       break;
   }
 }
-
+/** @brief Reset current mode and temporary value
+ * @retval NONE
+*/
 void Reset_current_state()
 {
   // Reset all mode setup value
@@ -682,6 +692,11 @@ void Reset_current_state()
   temp_val = 0;
 }
 
+/** @brief SPI transmit data
+ * @param pdata: pointer to data
+ * @param size: size of datas in uint8_t type
+ * @retval NONE
+*/
 void SPI_transmit(uint8_t *pdata, uint32_t size)
 {
   pdata += (size-1);
@@ -700,6 +715,10 @@ void SPI_transmit(uint8_t *pdata, uint32_t size)
   __HAL_SPI_DISABLE(&hspi1); // Disable SPI peripheral
 }
 
+/** @brief Send command to DACVREF
+ * @param vref: pointer of value in range 0~4095
+ * @retval NONE
+*/
 void DAC_send(uint16_t *vref)
 {
   *vref = DAC_SETTING | *vref;
@@ -708,6 +727,9 @@ void DAC_send(uint16_t *vref)
   HAL_GPIO_WritePin(CSDAC_GPIO_Port, CSDAC_Pin, GPIO_PIN_SET);
 }
 
+/** @brief Initilize LCD with UC1701 controller
+ * @retval NONE
+*/
 void uc1701Init()
 {
 	// Start by reseting the LCD controller (Hardware reset)
@@ -733,7 +755,7 @@ void uc1701Init()
 		0xa6, // (11.)disable inverse
 		0xaf, // (12.)enable display
 		0xa5, // (10.)Set all pixel OFF
-		0x81, 0x3e, // (9.)set contrast = 63
+		0x81, 0x32, // (9.)set contrast = 50
 	};
 	uc1701Set_CD_mode(MODE_COMMAND);
 	uc1701SPI_send(init_cmds, sizeof(init_cmds));
@@ -745,8 +767,8 @@ void uc1701Init()
 }
 
 /** @brief LCD send data
- *  @param value: pointer of data.
- *  @param size: how many byte of data need to be sent.
+ *  @param value: pointer of data
+ *  @param size: size of data in uint8_t type
  *  @retval None
  */
 void uc1701SPI_send(uint8_t *value, int size)
@@ -785,6 +807,7 @@ void uc1701SetPosition(int x, int y)
 							0x00 | (x & 0xf)};	// set X (low MSB)
 	uc1701SPI_send(cmds, sizeof(cmds));
 }
+
 /** @brief Write a block data to LCD.
  *  @param ucBuf: pointer of data.
  *  @param ilen: how many byte of data need to be sent.
@@ -811,7 +834,10 @@ void uc1701SetContrast(uint8_t ucContrast)
 
 
 
-
+/** @brief Function processing button interrupt
+ * @param GPIO_pin: GPIO pin name
+ * @retval NONE
+*/
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   switch (GPIO_Pin)
