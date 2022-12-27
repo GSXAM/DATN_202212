@@ -77,7 +77,7 @@ typedef enum FLASH_status
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
- ADC_HandleTypeDef hadc;
+ADC_HandleTypeDef hadc;
 DMA_HandleTypeDef hdma_adc;
 
 SPI_HandleTypeDef hspi1;
@@ -86,6 +86,7 @@ TIM_HandleTypeDef htim14;
 
 UART_HandleTypeDef huart1;
 DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart1_tx;
 
 /* USER CODE BEGIN PV */
 extern const uint8_t uc1701_font_UVLO[];
@@ -122,8 +123,8 @@ static void MX_GPIO_Init(void);
 static void MX_ADC_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_DMA_Init(void);
-static void MX_TIM14_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_TIM14_Init(void);
 /* USER CODE BEGIN PFP */
 static void UC1701_config(void);
 static void Buzz_bip(void);
@@ -147,7 +148,7 @@ void DAC_send(uint16_t *vref); // Send command to DACVREF
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-
+	
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -163,7 +164,7 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-  UC1701_config();
+
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -171,12 +172,12 @@ int main(void)
   MX_ADC_Init();
   MX_SPI1_Init();
   MX_DMA_Init();
-  MX_TIM14_Init();
   MX_USART1_UART_Init();
+  MX_TIM14_Init();
   /* USER CODE BEGIN 2 */
 
   /* Init ADC, DMA, SPI, UART, LCD */
-	HAL_ADC_Start_DMA(&hadc, adc_value, sizeof(adc_value));
+	// HAL_ADC_Start_DMA(&hadc, adc_value, sizeof(adc_value));
 	// HAL_UART_Receive_DMA(&huart1, uart_rx_value, sizeof(uart_rx_value)); // Note: New values will overwrite when overflow data (Circular mode)
   uc1701Init(&UC1701); // LCD init, setup LCD and clear screen
 	
@@ -201,7 +202,7 @@ int main(void)
   // Check Short circuit at the beginning
   // if((HAL_GPIO_ReadPin(S_CSP_GPIO_Port, S_CSP_Pin) & HAL_GPIO_ReadPin(C_SCP_GPIO_Port, C_SCP_Pin)) == 1)
   // {
-    HAL_Delay(1000); // delay 100ms
+  //   HAL_Delay(100); // delay 100ms
   // }
   // else{
   //   current_warning = WARNING_SCP;
@@ -231,92 +232,88 @@ int main(void)
   // While infinity loop
   while (1)
   {
-    // Shortcircuit protection
-    if(current_warning == WARNING_SCP)
-    {
-      // Display LCD: SCP
-      uc1701Fill(0); // clear LCD before warning
-      uc1701Write_warning((uint8_t*)uc1701_font_SCP, FONT_SCP_LENGTH);
-      while(current_warning != WARNING_NONE)
-      { // wait for OK button
-        Reset_current_state();
-        Buzz_bip();
-        HAL_Delay(500);
-      }
-      uc1701Fill(0); // clear LCD after warning
-      goto BEGIN_SWITCH_ON;
-    }
-    // Undervoltage lockout
-    if(adc_value[0] <= uvlo_compare) // A_UVLO <= UVLO
-    {
-      current_warning = WARNING_UVLO;
-      HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
-      HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
-      // Display LCD: UVLO
-      uc1701Fill(0); // clear LCD before warning
-      uc1701Write_warning((uint8_t*)uc1701_font_UVLO, FONT_UVLO_LENGTH);
-      while (current_warning != WARNING_NONE)
-      { // wait for OK button
-        Reset_current_state();
-        Buzz_bip();
-        HAL_Delay(500);
-      }
-      uc1701Fill(0); // clear LCD after warning
-      goto BEGIN_SWITCH_ON;
-    }
-    // Overvoltage protection
-    if(adc_value[1] >= ovp_compare) // A_VFB >= OVP
-    {
-      current_warning = WARNING_OVP;
-      HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
-      // Display LCD: OVP
-      uc1701Fill(0); // clear LCD before warning
-      uc1701Write_warning((uint8_t*)uc1701_font_OVP, FONT_OVP_LENGTH);
-      while (current_warning != WARNING_NONE)
-      { // wait for OK button
-        Reset_current_state();
-        Buzz_bip();
-        HAL_Delay(500);
-      }
-      uc1701Fill(0); // clear LCD after warning
-      goto BEGIN_SWITCH_ON;
-    }
-    // Overcurrent protection
-    if(adc_value[2] >= ocp_compare)
-    { // A_CSENSE >= OCP
-      current_warning = WARNING_OCP;
-      HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
-      // Display LCD: OCP
-      uc1701Fill(0); // clear LCD before warning
-      uc1701Write_warning((uint8_t*)uc1701_font_OCP, FONT_OCP_LENGTH);
-      while (current_warning != WARNING_NONE)
-      { // wait for OK button
-        Reset_current_state();
-        Buzz_bip();
-        HAL_Delay(500);
-      }
-      uc1701Fill(0); // clear LCD after warning
-      goto BEGIN_OUTPUT;
-    }
-    // LED power good
-    if(adc_value[1] >= (pw_good_th + pw_good_hys))
-    {
-      HAL_GPIO_WritePin(PGOOD_GPIO_Port, PGOOD_Pin, GPIO_PIN_RESET);
-    }
-    else if (adc_value[1] <= (pw_good_th - pw_good_hys))
-    {
-      HAL_GPIO_WritePin(PGOOD_GPIO_Port, PGOOD_Pin, GPIO_PIN_SET);
-    }
+    // // Shortcircuit protection
+    // if(current_warning == WARNING_SCP)
+    // {
+    //   // Display LCD: SCP
+    //   uc1701Write_warning((uint8_t*)uc1701_font_SCP, FONT_SCP_LENGTH);
+    //   while(current_warning != WARNING_NONE)
+    //   { // wait for OK button
+    //     Reset_current_state();
+    //     Buzz_bip();
+    //     HAL_Delay(500);
+    //   }
+    //   uc1701Fill(0); // clear LCD after warning
+    //   goto BEGIN_SWITCH_ON;
+    // }
+    // // Undervoltage lockout
+    // if(adc_value[0] <= uvlo_compare) // A_UVLO <= UVLO
+    // {
+    //   current_warning = WARNING_UVLO;
+    //   HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
+    //   HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
+    //   HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
+    //   // Display LCD: UVLO
+    //   uc1701Write_warning((uint8_t*)uc1701_font_UVLO, FONT_UVLO_LENGTH);
+    //   while (current_warning != WARNING_NONE)
+    //   { // wait for OK button
+    //     Reset_current_state();
+    //     Buzz_bip();
+    //     HAL_Delay(500);
+    //   }
+    //   uc1701Fill(0); // clear LCD after warning
+    //   goto BEGIN_SWITCH_ON;
+    // }
+    // // Overvoltage protection
+    // if(adc_value[1] >= ovp_compare) // A_VFB >= OVP
+    // {
+    //   current_warning = WARNING_OVP;
+    //   HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
+    //   HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
+    //   // Display LCD: OVP
+    //   uc1701Write_warning((uint8_t*)uc1701_font_OVP, FONT_OVP_LENGTH);
+    //   while (current_warning != WARNING_NONE)
+    //   { // wait for OK button
+    //     Reset_current_state();
+    //     Buzz_bip();
+    //     HAL_Delay(500);
+    //   }
+    //   uc1701Fill(0); // clear LCD after warning
+    //   goto BEGIN_SWITCH_ON;
+    // }
+    // // Overcurrent protection
+    // if(adc_value[2] >= ocp_compare)
+    // { // A_CSENSE >= OCP
+    //   current_warning = WARNING_OCP;
+    //   HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
+    //   // Display LCD: OCP
+    //   uc1701Write_warning((uint8_t*)uc1701_font_OCP, FONT_OCP_LENGTH);
+    //   while (current_warning != WARNING_NONE)
+    //   { // wait for OK button
+    //     Reset_current_state();
+    //     Buzz_bip();
+    //     HAL_Delay(500);
+    //   }
+    //   uc1701Fill(0); // clear LCD after warning
+    //   goto BEGIN_OUTPUT;
+    // }
+    // // LED power good
+    // if(adc_value[1] >= (pw_good_th + pw_good_hys))
+    // {
+    //   HAL_GPIO_WritePin(PGOOD_GPIO_Port, PGOOD_Pin, GPIO_PIN_RESET);
+    // }
+    // else if (adc_value[1] <= (pw_good_th - pw_good_hys))
+    // {
+    //   HAL_GPIO_WritePin(PGOOD_GPIO_Port, PGOOD_Pin, GPIO_PIN_SET);
+    // }
 
-    if((HAL_GetTick() - LCD_tickstart) >= LCD_DELAY250)
-    {
-      // -------------------------------------
-      // Display Voltage, Current, Power change on LCD
-      // -------------------------------------
-      uc1701Write_ADC_value(adc_value);
-    }
+    // if((HAL_GetTick() - LCD_tickstart) >= LCD_DELAY250)
+    // {
+    //   // -------------------------------------
+    //   // Display Voltage, Current, Power change on LCD
+    //   // -------------------------------------
+    //   uc1701Write_ADC_value(adc_value);
+    // }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -413,7 +410,7 @@ static void MX_ADC_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = ADC_RANK_CHANNEL_NUMBER;
-  sConfig.SamplingTime = ADC_SAMPLETIME_7CYCLES_5;
+  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
   if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -603,12 +600,19 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(CSDAC_GPIO_Port, CSDAC_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pins : SD_Pin C_SCP_Pin BUZZ_Pin PGOOD_Pin */
-  GPIO_InitStruct.Pin = SD_Pin|C_SCP_Pin|BUZZ_Pin|PGOOD_Pin;
+  /*Configure GPIO pins : SD_Pin BUZZ_Pin PGOOD_Pin */
+  GPIO_InitStruct.Pin = SD_Pin|BUZZ_Pin|PGOOD_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : C_SCP_Pin */
+  GPIO_InitStruct.Pin = C_SCP_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(C_SCP_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : S_CSP_Pin BT_PLUS_Pin BT_OK_Pin */
   GPIO_InitStruct.Pin = S_CSP_Pin|BT_PLUS_Pin|BT_OK_Pin;
@@ -744,10 +748,10 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   {
     case S_CSP_Pin:
       Buzz_bip();
-      // current_warning = WARNING_SCP;
-      // HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
-      // HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
-      // HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
+      current_warning = WARNING_SCP;
+      HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
+      HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
       break;
     case BT_MODE_Pin:
       Buzz_bip();
@@ -756,47 +760,35 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
         case MODE_NONE:
           temp_val = uvlo_flash;
           // Set UVLO mode cursor
-          if(current_warning == WARNING_NONE)
-          {
-            uc1701SetPosition(92, 0);
-            uc1701Write_string("*",1);
-          }
+          uc1701SetPosition(92, 0);
+          uc1701Write_string("*",1);
           current_mode++;
           break;
         case MODE_SET_UVLO:
           temp_val = vout_flash;
           // Erase UVLO mode cursor
-          if(current_warning == WARNING_NONE)
-          {
-            uc1701SetPosition(92, 0);
-            uc1701Write_string(" ",1);
-            // Set VOUT mode cursor
-            uc1701SetPosition(92, 3);
-            uc1701Write_string("*",1);
-          }
+          uc1701SetPosition(92, 0);
+          uc1701Write_string(" ",1);
+          // Set VOUT mode cursor
+          uc1701SetPosition(92, 3);
+          uc1701Write_string("*",1);
           current_mode++;
           break;
         case MODE_SET_VOUT:
           temp_val = ocp_flash;
           // Erase VOUT mode cursor
-          if(current_warning == WARNING_NONE)
-          {
-            uc1701SetPosition(92, 3);
-            uc1701Write_string(" ",1);
-            // Set OCP mode cursor
-            uc1701SetPosition(98, 6);
-            uc1701Write_string("*",1);
-          }
+          uc1701SetPosition(92, 3);
+          uc1701Write_string(" ",1);
+          // Set OCP mode cursor
+          uc1701SetPosition(98, 6);
+          uc1701Write_string("*",1);
           current_mode++;
           break;
         case MODE_SET_OCP:
           temp_val = 0;
           // Erase OCP mode cursor
-          if(current_warning == WARNING_NONE)
-          {
-            uc1701SetPosition(98, 6);
-            uc1701Write_string(" ",1);
-          }
+          uc1701SetPosition(98, 6);
+          uc1701Write_string(" ",1);
           current_mode = MODE_NONE;
           break;
         default:
