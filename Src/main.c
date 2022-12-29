@@ -52,10 +52,10 @@ typedef enum FLASH_status
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FACTOR_UVLO 156.844 // =(4095/3.3V)*(6.8k/(6.8k+47k))
-#define FACTOR_VOUT 310.227 // =(4095/3.3V)*(15.67k/(15.67k+47k))
-#define FACTOR_OVP 93.0681 // =0.3V*(4095/3.3V)*(15.67k/(15.67k+47k))
-#define FACTOR_DAC FACTOR_VOUT // =(4095/(3.3)*(1/4)
+// #define FACTOR_UVLO 156.844 // =(4095/3.3V)*(6.8k/(6.8k+47k))
+// #define FACTOR_VOUT 310.227 // =(4095/3.3V)*(15.67k/(15.67k+47k))
+#define FACTOR_OVP 45 // uc1701_map(0.3V, 0, 4095, 0, 14.2);
+// #define FACTOR_DAC FACTOR_VOUT // =(4095/(3.3)*(1/4)
 // #define GAIN_OCP 21.5 // Gain of output current sense
 
 #define DAC_SETTING (uint16_t)0x7000u // bit15=0: channel A; bit14=1: buffered; bit13=1: gain x1; bit12=1: output enable
@@ -126,7 +126,8 @@ static void MX_TIM14_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 static void UC1701_config(void);
-static void Buzz_bip(void);
+static void Buzz_bip_warning(void);
+static void Buzz_bip_button(void);
 
 void Setup_values(); // Converting user values to 12-bit values
 void Flash_read_write(uint32_t flash_OP); // Read or write user values to flash memory
@@ -180,9 +181,9 @@ int main(void)
 	// HAL_UART_Receive_DMA(&huart1, uart_rx_value, sizeof(uart_rx_value)); // Note: New values will overwrite when overflow data (Circular mode)
   uc1701Init(&UC1701); // LCD init, setup LCD and clear screen
 	
-	// erase_init.TypeErase = FLASH_TYPEERASE_PAGES;
-	// erase_init.PageAddress = STARTPAGE;
-	// erase_init.NbPages = 1;
+	erase_init.TypeErase = FLASH_TYPEERASE_PAGES;
+	erase_init.PageAddress = STARTPAGE;
+	erase_init.NbPages = 1;
 	
   /** @brief Initial values:
    * UVLO at 11V
@@ -199,26 +200,27 @@ int main(void)
   HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_SET); // Switch ON
   HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1); // Start timer, output PWM 50kHz 2.5%
   // Check Short circuit at the beginning
-  // if((HAL_GPIO_ReadPin(S_CSP_GPIO_Port, S_CSP_Pin) & HAL_GPIO_ReadPin(C_SCP_GPIO_Port, C_SCP_Pin)) == 1)
-  // {
+  if((HAL_GPIO_ReadPin(S_CSP_GPIO_Port, S_CSP_Pin) \
+    /* & HAL_GPIO_ReadPin(C_SCP_GPIO_Port, C_SCP_Pin) */) == 1)
+  {
     HAL_Delay(1000); // delay 100ms
-  // }
-  // else{
-  //   current_warning = WARNING_SCP;
-  //   HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
-  //   HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
-  //   HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
-  //   // Display LCD: SCP
-  //   uc1701Write_warning((uint8_t*)uc1701_font_SCP, FONT_SCP_LENGTH);
-  //   while(current_warning != WARNING_NONE)
-  //   { // wait for OK button
-  //     Reset_current_state();
-  //     Buzz_bip();
-  //     HAL_Delay(500);
-  //   }
-  //   uc1701Fill(0); // clear LCD after warning
-  //   goto BEGIN_SWITCH_ON;
-  // }
+  }
+  else{
+    current_warning = WARNING_SCP;
+    HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
+    HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
+    // Display LCD: SCP
+    uc1701Write_warning((uint8_t*)uc1701_font_SCP, FONT_SCP_LENGTH);
+    while(current_warning != WARNING_NONE)
+    { // wait for OK button
+      Reset_current_state();
+      Buzz_bip_warning();
+      HAL_Delay(1000);
+    }
+    uc1701Fill(0); // clear LCD after warning
+    goto BEGIN_SWITCH_ON;
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -240,8 +242,8 @@ int main(void)
       while(current_warning != WARNING_NONE)
       { // wait for OK button
         Reset_current_state();
-        Buzz_bip();
-        HAL_Delay(500);
+        Buzz_bip_warning();
+        HAL_Delay(1000);
       }
       uc1701Fill(0); // clear LCD after warning
       goto BEGIN_SWITCH_ON;
@@ -259,8 +261,8 @@ int main(void)
       while (current_warning != WARNING_NONE)
       { // wait for OK button
         Reset_current_state();
-        Buzz_bip();
-        HAL_Delay(500);
+        Buzz_bip_warning();
+        HAL_Delay(1000);
       }
       uc1701Fill(0); // clear LCD after warning
       goto BEGIN_SWITCH_ON;
@@ -277,8 +279,8 @@ int main(void)
       while (current_warning != WARNING_NONE)
       { // wait for OK button
         Reset_current_state();
-        Buzz_bip();
-        HAL_Delay(500);
+        Buzz_bip_warning();
+        HAL_Delay(1000);
       }
       uc1701Fill(0); // clear LCD after warning
       goto BEGIN_SWITCH_ON;
@@ -294,8 +296,8 @@ int main(void)
       while (current_warning != WARNING_NONE)
       { // wait for OK button
         Reset_current_state();
-        Buzz_bip();
-        HAL_Delay(500);
+        Buzz_bip_warning();
+        HAL_Delay(1000);
       }
       uc1701Fill(0); // clear LCD after warning
       goto BEGIN_OUTPUT;
@@ -652,20 +654,14 @@ static void MX_GPIO_Init(void)
 */
 void Setup_values()
 {
-  uvlo_compare = uvlo_flash * FACTOR_UVLO;
-  ovp_compare = vout_flash * FACTOR_VOUT + FACTOR_OVP;
-  ocp_compare = FACTOR_OCP(ocp_flash);
-  pw_good_th = vout_flash * FACTOR_VOUT * PG_TH;
-  pw_good_hys = vout_flash * FACTOR_VOUT * PG_HYSTERESIS;
-  // When vout_flash has just been updated or on system startup,
-  // send new vout to output through DACVREF.
-  uint16_t temp = vout_flash * FACTOR_DAC;
-  if(temp != vref)
-  {
-    vref = temp;
-    // send vref to DAC
-    DAC_send(&vref);
-  }
+  uint16_t vout = uc1701_map(vout_flash, 0, 4095, 0, 14.2);
+  uvlo_compare = uc1701_map(uvlo_flash, 0, 4095, 0, 27.2);
+  ovp_compare = vout + FACTOR_OVP;
+  ocp_compare = uc1701_map(ocp_flash, 1120, 4095, 0, 25.2);
+  pw_good_th = vout * PG_TH;
+  pw_good_hys = vout * PG_HYSTERESIS;
+  // Send vout to output through DACVREF.
+  DAC_send(&vout);
 }
 
 /** @brief Read or write user values to FLASH memory, then setup comparing values
@@ -724,7 +720,8 @@ void Reset_current_state()
 */
 void DAC_send(uint16_t *vref)
 {
-  *vref = DAC_SETTING | *vref;
+  *vref |= DAC_SETTING;
+  uint8_t temp[] = {(*vref >> 8u), (*vref & 0x00FFu)};
   HAL_GPIO_WritePin(CSDAC_GPIO_Port, CSDAC_Pin, GPIO_PIN_RESET);
   HAL_SPI_Transmit(&hspi1, (uint8_t*)vref, 2, 100);
   HAL_GPIO_WritePin(CSDAC_GPIO_Port, CSDAC_Pin, GPIO_PIN_SET);
@@ -743,14 +740,13 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   switch (GPIO_Pin)
   {
     case S_CSP_Pin:
-      Buzz_bip();
-      // current_warning = WARNING_SCP;
-      // HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
-      // HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
-      // HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
+      current_warning = WARNING_SCP;
+      HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
+      HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
       break;
     case BT_MODE_Pin:
-      Buzz_bip();
+      Buzz_bip_button();
       switch (current_mode)
       {
         case MODE_NONE:
@@ -804,15 +800,15 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
       }
       break;
     case BT_PLUS_Pin:
-      Buzz_bip();
+      Buzz_bip_button();
       temp_val += 0.1;
       break;
     case BT_minus_Pin:
-      Buzz_bip();
+      Buzz_bip_button();
       temp_val -= 0.1;
       break;
     case BT_OK_Pin:
-      Buzz_bip();
+      Buzz_bip_button();
       // 1. Reset warning
       if(current_warning != WARNING_NONE)
       {
@@ -859,10 +855,22 @@ static void UC1701_config()
 	UC1701.p_spi = &hspi1;
 }
 
-/** @brief Buzzer bip warning
+/** @brief Buzzer bip warning 5 bips in 1 second
  * 	@retval None.
  */
-static void Buzz_bip(void)
+static void Buzz_bip_warning(void)
+{
+  for(int i = 0; i<10; i++)
+	{
+		HAL_GPIO_TogglePin(BUZZ_GPIO_Port, BUZZ_Pin);
+		HAL_Delay(100);
+	}
+}
+
+/** @brief Buzzer bip when button click
+ * 	@retval None.
+ */
+static void Buzz_bip_button(void)
 {
   HAL_GPIO_WritePin(BUZZ_GPIO_Port, BUZZ_Pin, GPIO_PIN_SET);
   HAL_Delay(50);

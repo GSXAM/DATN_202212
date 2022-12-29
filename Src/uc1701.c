@@ -231,14 +231,20 @@ static void uc1701Write_float_number(float number, uint32_t type)
 {
 	/* floor(): Returns the largest integer not greater than x, expressed as a double */
 	/* round(): Returns the largest integer greater than x, expressed as a double */
-	uint32_t i_ten = floor(number/10);
-	uint32_t i_unit = floor(number) - i_ten*10;
-	uint32_t f_ten = floor(number*10) - i_ten*100 - i_unit*10;
-	uint32_t f_unit = round(number*100) - i_ten*1000 - i_unit*100 - f_ten*10;
-	if(f_unit > 9) /* if f_unit = 10, neglect (0) */
-	{
-		f_unit = 1;
-	}
+	uint32_t i_ten = (uint32_t)floor(number/10);
+	uint32_t i_unit = (uint32_t)(floor(number) - i_ten*10);
+	uint32_t f_ten = (uint32_t)(floor(number*10) - i_ten*100 - i_unit*10);
+	uint32_t f_unit = (uint32_t)(round(number*100) - i_ten*1000 - i_unit*100 - f_ten*10);
+	/* Check number in range [0:9], make sure the number will become
+	 * a right pointer in uc1701_number_16x11 array characters
+	 * --> this help CPU do not refer to wrong address and
+	 * HardFault_Handler() happen.
+	 */
+	if(i_ten>9) i_ten = 0;
+	if(i_unit>9) i_unit = 0;
+	if(f_ten>9) f_ten = 0;
+	if(f_unit>9) f_unit = 1;
+	
 	switch (type)
 	{
 		case TYPE_VOLT:
@@ -412,18 +418,18 @@ void uc1701Write_warning(uint8_t *font, uint32_t fontlength)
 	switch (fontlength)
 	{
 	case FONT_UVLO_LENGTH:
-			fontlength = (sizeof(uc1701_font_UVLO)/4);
-			x = 6;
+		fontlength = (sizeof(uc1701_font_UVLO)/4);
+		x = 6;
 		break;
-		case FONT_OCP_LENGTH:
-			fontlength = (sizeof(uc1701_font_OCP)/4);
-			break;
-		case FONT_OVP_LENGTH:
-			fontlength = (sizeof(uc1701_font_OVP)/4);
-			break;
-		case FONT_SCP_LENGTH:
-			fontlength = (sizeof(uc1701_font_SCP)/4);
-			break;
+	case FONT_OCP_LENGTH:
+		fontlength = (sizeof(uc1701_font_OCP)/4);
+		break;
+	case FONT_OVP_LENGTH:
+		fontlength = (sizeof(uc1701_font_OVP)/4);
+		break;
+	case FONT_SCP_LENGTH:
+		fontlength = (sizeof(uc1701_font_SCP)/4);
+		break;
 	default:
 		break;
 	}
@@ -495,14 +501,16 @@ void uc1701Write_setup_value(float uvlo, float vout, float ocp)
  */
 void uc1701Write_ADC_value(uint32_t *ADC_value)
 {
-	float float_values[] = {*(ADC_value+1), *(ADC_value+2), 0};
-	float_values[0] =  fabs(uc1701_map(float_values[0], 0, 4095, 0, 14.2)); // compute VOUT in range [0:10V]
-	float_values[1] = fabs(uc1701_map(float_values[1], 1120, 4095, 0, 25.2)); // compute CURRENT in range [0:10A]
-	float_values[2] = float_values[0] * float_values[1]; // compute WATT
-
-	uc1701Write_float_number(float_values[0], TYPE_VOLT);
-	uc1701Write_float_number(float_values[1], TYPE_AMPE);
-	uc1701Write_float_number(float_values[2], TYPE_WATT);
+	// compute VOUT in range [0:10V]
+	float volt =  fabs(uc1701_map(*(ADC_value+1), 0, 4095, 0, 14.2));
+	// compute CURRENT in range [0:10A]
+	float amp = fabs(uc1701_map(*(ADC_value+2), 1140, 4095, 0, 25.2));
+	// compute WATT
+	float watt = volt*amp; 
+	
+	uc1701Write_float_number(volt, TYPE_VOLT);
+	uc1701Write_float_number(amp, TYPE_AMPE);
+	uc1701Write_float_number(watt, TYPE_WATT);
 }
 
 /** @brief Write string in font 6x8 to LCD
@@ -517,3 +525,17 @@ void uc1701Write_string(char *str, uint32_t strlen)
 		uc1701WriteDataBlock((uint8_t*)uc1701_font_6x8[*i - 32], 6);
 	}
 }
+
+/** @brief Re-maps a number from one range to another.
+ * 	@param value: the number to be converted.
+ * 	@param fromLow: the lower bound of the values current range.
+ *	@param fromHigh: the upper bound of the values current range.
+ * 	@param toLow: the lower bound of the values target range.
+ *	@param toHigh: the upper bound of the values target range.
+ * 	@retval None.
+ */
+float uc1701_map(uint32_t value, uint32_t fromLow, uint32_t fromHigh, float toLow, float toHigh)
+{
+  return (value - fromLow) * (toHigh - toLow) / (fromHigh - fromLow) + toLow;
+}
+
