@@ -24,6 +24,12 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+#define uc1701_ADC_MAX 4027 // maximum value of adc at 3.327V is 4027
+#define uc1701_IOUT_ZERO 1210 // At 0A --> adc value is 1201
+#define uc1701_IOUT_MAX 23 // Iout_max = 23A
+#define uc1701_VOUT_MAX 11.25 // Vout max = 10.8V
+#define uc1701_UVLO_MAX 26.322 // UVLO_max = 26.322V
+
 #define MODE_COMMAND GPIO_PIN_RESET
 #define MODE_DATA 	 GPIO_PIN_SET
 

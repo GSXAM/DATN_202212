@@ -503,9 +503,9 @@ void uc1701Write_setup_value(float uvlo, float vout, float ocp)
 void uc1701Write_ADC_value(uint32_t *ADC_value)
 {
 	// compute VOUT in range [0:10V]
-	float volt =  fabs(uc1701_map(*(ADC_value+1), 0, 4095, 0, 14.2));
+	float volt =  fabs(uc1701_map(*(ADC_value+1), 0, uc1701_ADC_MAX, 0, uc1701_VOUT_MAX));
 	// compute CURRENT in range [0:10A]
-	float amp = fabs(uc1701_map(*(ADC_value+2), 1130, 4095, 0, 25.2));
+	float amp = fabs(uc1701_map(*(ADC_value+2), uc1701_IOUT_ZERO, uc1701_ADC_MAX, 0, uc1701_IOUT_MAX));
 	// compute WATT
 	float watt = volt*amp; 
 	

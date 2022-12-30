@@ -55,7 +55,7 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-extern UART_HandleTypeDef huart1;
+
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -149,7 +149,7 @@ void EXTI0_1_IRQHandler(void)
 
   /* USER CODE END EXTI0_1_IRQn 0 */
   HAL_GPIO_EXTI_IRQHandler(BT_MODE_Pin);
-  HAL_GPIO_EXTI_IRQHandler(BT_minus_Pin);
+  HAL_GPIO_EXTI_IRQHandler(BT_MINUS_Pin);
   /* USER CODE BEGIN EXTI0_1_IRQn 1 */
 
   /* USER CODE END EXTI0_1_IRQn 1 */
@@ -163,26 +163,12 @@ void EXTI4_15_IRQHandler(void)
   /* USER CODE BEGIN EXTI4_15_IRQn 0 */
 
   /* USER CODE END EXTI4_15_IRQn 0 */
-  HAL_GPIO_EXTI_IRQHandler(S_CSP_Pin);
+  HAL_GPIO_EXTI_IRQHandler(S_SCP_Pin);
   HAL_GPIO_EXTI_IRQHandler(BT_PLUS_Pin);
   HAL_GPIO_EXTI_IRQHandler(BT_OK_Pin);
   /* USER CODE BEGIN EXTI4_15_IRQn 1 */
 
   /* USER CODE END EXTI4_15_IRQn 1 */
-}
-
-/**
-  * @brief This function handles USART1 global interrupt.
-  */
-void USART1_IRQHandler(void)
-{
-  /* USER CODE BEGIN USART1_IRQn 0 */
-
-  /* USER CODE END USART1_IRQn 0 */
-  HAL_UART_IRQHandler(&huart1);
-  /* USER CODE BEGIN USART1_IRQn 1 */
-
-  /* USER CODE END USART1_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */

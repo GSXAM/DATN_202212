@@ -59,27 +59,21 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define A_CSENSE_Pin GPIO_PIN_0
-#define A_CSENSE_GPIO_Port GPIOA
-#define A_VFB_Pin GPIO_PIN_1
-#define A_VFB_GPIO_Port GPIOA
-#define A_UVLO_Pin GPIO_PIN_2
-#define A_UVLO_GPIO_Port GPIOA
 #define SD_Pin GPIO_PIN_3
 #define SD_GPIO_Port GPIOA
 #define C_SCP_Pin GPIO_PIN_5
 #define C_SCP_GPIO_Port GPIOA
-#define S_CSP_Pin GPIO_PIN_6
-#define S_CSP_GPIO_Port GPIOA
-#define S_CSP_EXTI_IRQn EXTI4_15_IRQn
+#define S_SCP_Pin GPIO_PIN_6
+#define S_SCP_GPIO_Port GPIOA
+#define S_SCP_EXTI_IRQn EXTI4_15_IRQn
 #define BUZZ_Pin GPIO_PIN_7
 #define BUZZ_GPIO_Port GPIOA
 #define BT_MODE_Pin GPIO_PIN_0
 #define BT_MODE_GPIO_Port GPIOB
 #define BT_MODE_EXTI_IRQn EXTI0_1_IRQn
-#define BT_minus_Pin GPIO_PIN_1
-#define BT_minus_GPIO_Port GPIOB
-#define BT_minus_EXTI_IRQn EXTI0_1_IRQn
+#define BT_MINUS_Pin GPIO_PIN_1
+#define BT_MINUS_GPIO_Port GPIOB
+#define BT_MINUS_EXTI_IRQn EXTI0_1_IRQn
 #define BT_PLUS_Pin GPIO_PIN_8
 #define BT_PLUS_GPIO_Port GPIOA
 #define BT_PLUS_EXTI_IRQn EXTI4_15_IRQn
