@@ -68,4 +68,3 @@ void uc1701Write_ADC_value(uint32_t *ADC_value);
 void uc1701Write_skeleton();
 void uc1701Write_setup_value(float uvlo, float vout, float ocp);
 void uc1701Write_string(char *str, uint32_t strlen);
-float uc1701_map(uint32_t x, uint32_t fromLow, uint32_t fromHigh, float toLow, float toHigh);

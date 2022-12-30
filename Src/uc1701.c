@@ -179,6 +179,7 @@ static void uc1701SPI_send(uint8_t *value, int size);
 static void uc1701WriteDataBlock(uint8_t *ucBuf, int iLen);
 static void uc1701Write_number(uint32_t number, int x, int y);
 static void uc1701Write_float_number(float number, uint32_t type);
+static float uc1701_map(uint32_t x, uint32_t fromLow, uint32_t fromHigh, float toLow, float toHigh); // static function
 
 
 /*****************************************************************************/
@@ -504,7 +505,7 @@ void uc1701Write_ADC_value(uint32_t *ADC_value)
 	// compute VOUT in range [0:10V]
 	float volt =  fabs(uc1701_map(*(ADC_value+1), 0, 4095, 0, 14.2));
 	// compute CURRENT in range [0:10A]
-	float amp = fabs(uc1701_map(*(ADC_value+2), 1140, 4095, 0, 25.2));
+	float amp = fabs(uc1701_map(*(ADC_value+2), 1130, 4095, 0, 25.2));
 	// compute WATT
 	float watt = volt*amp; 
 	
@@ -534,7 +535,7 @@ void uc1701Write_string(char *str, uint32_t strlen)
  *	@param toHigh: the upper bound of the values target range.
  * 	@retval None.
  */
-float uc1701_map(uint32_t value, uint32_t fromLow, uint32_t fromHigh, float toLow, float toHigh)
+static float uc1701_map(uint32_t value, uint32_t fromLow, uint32_t fromHigh, float toLow, float toHigh)
 {
   return (value - fromLow) * (toHigh - toLow) / (fromHigh - fromLow) + toLow;
 }

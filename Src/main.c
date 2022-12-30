@@ -54,7 +54,7 @@ typedef enum FLASH_status
 /* USER CODE BEGIN PD */
 // #define FACTOR_UVLO 156.844 // =(4095/3.3V)*(6.8k/(6.8k+47k))
 // #define FACTOR_VOUT 310.227 // =(4095/3.3V)*(15.67k/(15.67k+47k))
-#define FACTOR_OVP 45 // uc1701_map(0.3V, 0, 4095, 0, 14.2);
+#define FACTOR_OVP 86 // map(0.3V, 0, 14.2, 0, 4095);
 // #define FACTOR_DAC FACTOR_VOUT // =(4095/(3.3)*(1/4)
 // #define GAIN_OCP 21.5 // Gain of output current sense
 
@@ -128,6 +128,7 @@ static void MX_USART1_UART_Init(void);
 static void UC1701_config(void);
 static void Buzz_bip_warning(void);
 static void Buzz_bip_button(void);
+static float map(float value, float fromLow, float fromHigh, uint32_t toLow, uint32_t toHigh);
 
 void Setup_values(); // Converting user values to 12-bit values
 void Flash_read_write(uint32_t flash_OP); // Read or write user values to flash memory
@@ -164,7 +165,7 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-  UC1701_config();
+  // UC1701_config();
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -177,13 +178,13 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   /* Init ADC, DMA, SPI, UART, LCD */
-	HAL_ADC_Start_DMA(&hadc, adc_value, sizeof(adc_value));
+	HAL_ADC_Start_DMA(&hadc, adc_value, 3);
 	// HAL_UART_Receive_DMA(&huart1, uart_rx_value, sizeof(uart_rx_value)); // Note: New values will overwrite when overflow data (Circular mode)
-  uc1701Init(&UC1701); // LCD init, setup LCD and clear screen
+  // uc1701Init(&UC1701); // LCD init, setup LCD and clear screen
 	
-	erase_init.TypeErase = FLASH_TYPEERASE_PAGES;
-	erase_init.PageAddress = STARTPAGE;
-	erase_init.NbPages = 1;
+	// erase_init.TypeErase = FLASH_TYPEERASE_PAGES;
+	// erase_init.PageAddress = STARTPAGE;
+	// erase_init.NbPages = 1;
 	
   /** @brief Initial values:
    * UVLO at 11V
@@ -194,131 +195,128 @@ int main(void)
    * Overcurrent protection at 10A
    * @note Initial values are stored in flash memory
   */
-  Flash_read_write(FLASH_READ);
+  // Flash_read_write(FLASH_READ);
 	
-  BEGIN_SWITCH_ON: // Input voltage from source come into Power circuitry
-  HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_SET); // Switch ON
-  HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1); // Start timer, output PWM 50kHz 2.5%
-  // Check Short circuit at the beginning
-  if((HAL_GPIO_ReadPin(S_CSP_GPIO_Port, S_CSP_Pin) \
-    /* & HAL_GPIO_ReadPin(C_SCP_GPIO_Port, C_SCP_Pin) */) == 1)
-  {
-    HAL_Delay(1000); // delay 100ms
-  }
-  else{
-    current_warning = WARNING_SCP;
-    HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
-    HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
-    // Display LCD: SCP
-    uc1701Write_warning((uint8_t*)uc1701_font_SCP, FONT_SCP_LENGTH);
-    while(current_warning != WARNING_NONE)
-    { // wait for OK button
-      Reset_current_state();
-      Buzz_bip_warning();
-      HAL_Delay(1000);
-    }
-    uc1701Fill(0); // clear LCD after warning
-    goto BEGIN_SWITCH_ON;
-  }
+  // BEGIN_SWITCH_ON: // Input voltage from source come into Power circuitry
+  // HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_SET); // Switch ON
+	// HAL_Delay(1000);
+  // HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1); // Start timer, output PWM 50kHz 2.5%
+  // // Check Short circuit at the beginning
+  // if((HAL_GPIO_ReadPin(S_CSP_GPIO_Port, S_CSP_Pin) \
+  //   /* & HAL_GPIO_ReadPin(C_SCP_GPIO_Port, C_SCP_Pin) */) == 1)
+  // {
+  //   HAL_Delay(100); // delay 100ms
+  // }
+  // else{
+  //   current_warning = WARNING_SCP;
+  //   HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
+  //   HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
+  //   HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
+  //   // Display LCD: SCP
+  //   uc1701Write_warning((uint8_t*)uc1701_font_SCP, FONT_SCP_LENGTH);
+  //   while(current_warning != WARNING_NONE)
+  //   { // wait for OK button
+  //     Reset_current_state();
+  //     Buzz_bip_warning();
+  //   }
+  //   uc1701Fill(0); // clear LCD after warning
+  //   goto BEGIN_SWITCH_ON;
+  // }
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  BEGIN_OUTPUT: // Exporting VOUT and measure ADC values
-  HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_RESET);
-  uint32_t LCD_tickstart = HAL_GetTick(); // LCD timepoint to refresh
-  uc1701Write_skeleton();
-  uc1701Write_setup_value(uvlo_flash, vout_flash, ocp_flash);
+  // BEGIN_OUTPUT: // Exporting VOUT and measure ADC values
+  // HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_RESET);
+  // uint32_t LCD_tickstart = HAL_GetTick(); // LCD timepoint to refresh
+  // uc1701Write_skeleton();
+  // uc1701Write_setup_value(uvlo_flash, vout_flash, ocp_flash);
   // While infinity loop
   while (1)
   {
-    // Shortcircuit protection
-    if(current_warning == WARNING_SCP)
-    {
-      // Display LCD: SCP
-      uc1701Fill(0); // clear LCD before warning
-      uc1701Write_warning((uint8_t*)uc1701_font_SCP, FONT_SCP_LENGTH);
-      while(current_warning != WARNING_NONE)
-      { // wait for OK button
-        Reset_current_state();
-        Buzz_bip_warning();
-        HAL_Delay(1000);
-      }
-      uc1701Fill(0); // clear LCD after warning
-      goto BEGIN_SWITCH_ON;
-    }
-    // Undervoltage lockout
-    if(adc_value[0] <= uvlo_compare) // A_UVLO <= UVLO
-    {
-      current_warning = WARNING_UVLO;
-      HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
-      HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
-      // Display LCD: UVLO
-      uc1701Fill(0); // clear LCD before warning
-      uc1701Write_warning((uint8_t*)uc1701_font_UVLO, FONT_UVLO_LENGTH);
-      while (current_warning != WARNING_NONE)
-      { // wait for OK button
-        Reset_current_state();
-        Buzz_bip_warning();
-        HAL_Delay(1000);
-      }
-      uc1701Fill(0); // clear LCD after warning
-      goto BEGIN_SWITCH_ON;
-    }
-    // Overvoltage protection
-    if(adc_value[1] >= ovp_compare) // A_VFB >= OVP
-    {
-      current_warning = WARNING_OVP;
-      HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
-      // Display LCD: OVP
-      uc1701Fill(0); // clear LCD before warning
-      uc1701Write_warning((uint8_t*)uc1701_font_OVP, FONT_OVP_LENGTH);
-      while (current_warning != WARNING_NONE)
-      { // wait for OK button
-        Reset_current_state();
-        Buzz_bip_warning();
-        HAL_Delay(1000);
-      }
-      uc1701Fill(0); // clear LCD after warning
-      goto BEGIN_SWITCH_ON;
-    }
-    // Overcurrent protection
-    if(adc_value[2] >= ocp_compare)
-    { // A_CSENSE >= OCP
-      current_warning = WARNING_OCP;
-      HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
-      // Display LCD: OCP
-      uc1701Fill(0); // clear LCD before warning
-      uc1701Write_warning((uint8_t*)uc1701_font_OCP, FONT_OCP_LENGTH);
-      while (current_warning != WARNING_NONE)
-      { // wait for OK button
-        Reset_current_state();
-        Buzz_bip_warning();
-        HAL_Delay(1000);
-      }
-      uc1701Fill(0); // clear LCD after warning
-      goto BEGIN_OUTPUT;
-    }
-    // LED power good
-    if(adc_value[1] >= (pw_good_th + pw_good_hys))
-    {
-      HAL_GPIO_WritePin(PGOOD_GPIO_Port, PGOOD_Pin, GPIO_PIN_RESET);
-    }
-    else if (adc_value[1] <= (pw_good_th - pw_good_hys))
-    {
-      HAL_GPIO_WritePin(PGOOD_GPIO_Port, PGOOD_Pin, GPIO_PIN_SET);
-    }
+    // // Shortcircuit protection
+    // if(current_warning == WARNING_SCP)
+    // {
+    //   // Display LCD: SCP
+    //   uc1701Fill(0); // clear LCD before warning
+    //   uc1701Write_warning((uint8_t*)uc1701_font_SCP, FONT_SCP_LENGTH);
+    //   while(current_warning != WARNING_NONE)
+    //   { // wait for OK button
+    //     Reset_current_state();
+    //     Buzz_bip_warning();
+    //   }
+    //   uc1701Fill(0); // clear LCD after warning
+    //   goto BEGIN_SWITCH_ON;
+    // }
+    // // Undervoltage lockout
+    // if(adc_value[0] <= uvlo_compare) // A_UVLO <= UVLO
+    // {
+    //   current_warning = WARNING_UVLO;
+    //   HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
+    //   HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
+    //   HAL_TIM_PWM_Stop(&htim14, TIM_CHANNEL_1);
+    //   // Display LCD: UVLO
+    //   uc1701Fill(0); // clear LCD before warning
+    //   uc1701Write_warning((uint8_t*)uc1701_font_UVLO, FONT_UVLO_LENGTH);
+    //   while (current_warning != WARNING_NONE)
+    //   { // wait for OK button
+    //     Reset_current_state();
+    //     Buzz_bip_warning();
+    //   }
+    //   uc1701Fill(0); // clear LCD after warning
+    //   goto BEGIN_SWITCH_ON;
+    // }
+    // // Overvoltage protection
+    // if(adc_value[1] >= ovp_compare) // A_VFB >= OVP
+    // {
+    //   current_warning = WARNING_OVP;
+    //   HAL_GPIO_WritePin(C_SCP_GPIO_Port, C_SCP_Pin, GPIO_PIN_RESET);
+    //   HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
+    //   // Display LCD: OVP
+    //   uc1701Fill(0); // clear LCD before warning
+    //   uc1701Write_warning((uint8_t*)uc1701_font_OVP, FONT_OVP_LENGTH);
+    //   while (current_warning != WARNING_NONE)
+    //   { // wait for OK button
+    //     Reset_current_state();
+    //     Buzz_bip_warning();
+    //   }
+    //   uc1701Fill(0); // clear LCD after warning
+    //   goto BEGIN_SWITCH_ON;
+    // }
+    // // Overcurrent protection
+    // if(adc_value[2] >= ocp_compare)
+    // { // A_CSENSE >= OCP
+    //   current_warning = WARNING_OCP;
+    //   HAL_GPIO_WritePin(SD_GPIO_Port, SD_Pin, GPIO_PIN_SET);
+    //   // Display LCD: OCP
+    //   uc1701Fill(0); // clear LCD before warning
+    //   uc1701Write_warning((uint8_t*)uc1701_font_OCP, FONT_OCP_LENGTH);
+    //   while (current_warning != WARNING_NONE)
+    //   { // wait for OK button
+    //     Reset_current_state();
+    //     Buzz_bip_warning();
+    //   }
+    //   uc1701Fill(0); // clear LCD after warning
+    //   goto BEGIN_OUTPUT;
+    // }
+    // // LED power good
+    // if(adc_value[1] >= (pw_good_th + pw_good_hys))
+    // {
+    //   HAL_GPIO_WritePin(PGOOD_GPIO_Port, PGOOD_Pin, GPIO_PIN_RESET);
+    // }
+    // else if (adc_value[1] <= (pw_good_th - pw_good_hys))
+    // {
+    //   HAL_GPIO_WritePin(PGOOD_GPIO_Port, PGOOD_Pin, GPIO_PIN_SET);
+    // }
 
-    if((HAL_GetTick() - LCD_tickstart) >= LCD_DELAY250)
-    {
-      // -------------------------------------
-      // Display Voltage, Current, Power change on LCD
-      // -------------------------------------
-      uc1701Write_ADC_value(adc_value);
-    }
+    // if((HAL_GetTick() - LCD_tickstart) >= LCD_DELAY250)
+    // {
+    //   // -------------------------------------
+    //   // Display Voltage, Current, Power change on LCD
+    //   // -------------------------------------
+    //   uc1701Write_ADC_value(adc_value);
+		// 	LCD_tickstart = HAL_GetTick();
+    // }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -502,7 +500,7 @@ static void MX_TIM14_Init(void)
   htim14.Instance = TIM14;
   htim14.Init.Prescaler = 0;
   htim14.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim14.Init.Period = 960-1; // 50kHz
+  htim14.Init.Period = 960-1;
   htim14.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim14.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim14) != HAL_OK)
@@ -514,7 +512,7 @@ static void MX_TIM14_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 24; // 2.5%
+  sConfigOC.Pulse = 24;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim14, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
@@ -572,14 +570,6 @@ static void MX_DMA_Init(void)
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
 
-  /* DMA interrupt init */
-  /* DMA1_Channel1_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
-  /* DMA1_Channel2_3_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel2_3_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Channel2_3_IRQn);
-
 }
 
 /**
@@ -597,10 +587,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, SD_Pin|CSLCD_Pin|PGOOD_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOA, SD_Pin|RESETLCD_Pin|CSLCD_Pin|PGOOD_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, C_SCP_Pin|BUZZ_Pin|CD_Pin|RESETLCD_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, C_SCP_Pin|BUZZ_Pin|CD_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(CSDAC_GPIO_Port, CSDAC_Pin, GPIO_PIN_SET);
@@ -654,10 +644,10 @@ static void MX_GPIO_Init(void)
 */
 void Setup_values()
 {
-  uint16_t vout = uc1701_map(vout_flash, 0, 4095, 0, 14.2);
-  uvlo_compare = uc1701_map(uvlo_flash, 0, 4095, 0, 27.2);
+  uint16_t vout = map(vout_flash, 0, 14.2, 0, 4095);
+  uvlo_compare = map(uvlo_flash, 0, 27.2, 0, 4095);
   ovp_compare = vout + FACTOR_OVP;
-  ocp_compare = uc1701_map(ocp_flash, 1120, 4095, 0, 25.2);
+  ocp_compare = map(ocp_flash, 0, 25.2, 1120, 4095);
   pw_good_th = vout * PG_TH;
   pw_good_hys = vout * PG_HYSTERESIS;
   // Send vout to output through DACVREF.
@@ -723,7 +713,7 @@ void DAC_send(uint16_t *vref)
   *vref |= DAC_SETTING;
   uint8_t temp[] = {(*vref >> 8u), (*vref & 0x00FFu)};
   HAL_GPIO_WritePin(CSDAC_GPIO_Port, CSDAC_Pin, GPIO_PIN_RESET);
-  HAL_SPI_Transmit(&hspi1, (uint8_t*)vref, 2, 100);
+  HAL_SPI_Transmit(&hspi1, temp, 2, 100);
   HAL_GPIO_WritePin(CSDAC_GPIO_Port, CSDAC_Pin, GPIO_PIN_SET);
 }
 
@@ -802,10 +792,44 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     case BT_PLUS_Pin:
       Buzz_bip_button();
       temp_val += 0.1;
+      switch (current_mode)
+      {
+        case MODE_NONE:
+          // do nothing
+          break;
+        case MODE_SET_UVLO:
+          uc1701Write_setup_value(temp_val, vout_flash, ocp_flash);
+          break;
+        case MODE_SET_VOUT:
+          uc1701Write_setup_value(uvlo_flash, temp_val, ocp_flash);
+          break;
+        case MODE_SET_OCP:
+          uc1701Write_setup_value(uvlo_flash, vout_flash, temp_val);
+          break;
+        default:
+          break;
+      }
       break;
     case BT_minus_Pin:
       Buzz_bip_button();
       temp_val -= 0.1;
+      switch (current_mode)
+      {
+        case MODE_NONE:
+          // do nothing
+          break;
+        case MODE_SET_UVLO:
+          uc1701Write_setup_value(temp_val, vout_flash, ocp_flash);
+          break;
+        case MODE_SET_VOUT:
+          uc1701Write_setup_value(uvlo_flash, temp_val, ocp_flash);
+          break;
+        case MODE_SET_OCP:
+          uc1701Write_setup_value(uvlo_flash, vout_flash, temp_val);
+          break;
+        default:
+          break;
+      }
       break;
     case BT_OK_Pin:
       Buzz_bip_button();
@@ -823,17 +847,26 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
         case MODE_SET_UVLO:
           uvlo_flash = temp_val;
           Flash_read_write(FLASH_WRITE);
+          uc1701SetPosition(92, 0);
+          uc1701Write_string(" ",1);
           uc1701Write_setup_value(uvlo_flash, vout_flash, ocp_flash);
+          current_mode = MODE_NONE;
           break;
         case MODE_SET_VOUT:
           vout_flash = temp_val;
           Flash_read_write(FLASH_WRITE);
+          uc1701SetPosition(92, 3);
+          uc1701Write_string(" ",1);
           uc1701Write_setup_value(uvlo_flash, vout_flash, ocp_flash);
+          current_mode = MODE_NONE;
           break;
         case MODE_SET_OCP:
           ocp_flash = temp_val;
           Flash_read_write(FLASH_WRITE);
+          uc1701SetPosition(98, 6);
+          uc1701Write_string(" ",1);
           uc1701Write_setup_value(uvlo_flash, vout_flash, ocp_flash);
+          current_mode = MODE_NONE;
           break;
         default:
           break;
@@ -865,6 +898,7 @@ static void Buzz_bip_warning(void)
 		HAL_GPIO_TogglePin(BUZZ_GPIO_Port, BUZZ_Pin);
 		HAL_Delay(100);
 	}
+	HAL_Delay(1000);
 }
 
 /** @brief Buzzer bip when button click
@@ -875,6 +909,19 @@ static void Buzz_bip_button(void)
   HAL_GPIO_WritePin(BUZZ_GPIO_Port, BUZZ_Pin, GPIO_PIN_SET);
   HAL_Delay(50);
   HAL_GPIO_WritePin(BUZZ_GPIO_Port, BUZZ_Pin, GPIO_PIN_RESET);
+}
+
+/** @brief Re-maps a number from one range to another.
+ * 	@param value: the number to be converted.
+ * 	@param fromLow: the lower bound of the values current range.
+ *	@param fromHigh: the upper bound of the values current range.
+ * 	@param toLow: the lower bound of the values target range.
+ *	@param toHigh: the upper bound of the values target range.
+ * 	@retval None.
+ */
+static float map(float value, float fromLow, float fromHigh, uint32_t toLow, uint32_t toHigh)
+{
+  return (value - fromLow) * (toHigh - toLow) / (fromHigh - fromLow) + toLow;
 }
 /* USER CODE END 4 */
 
